@@ -1,0 +1,19 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install xcodegen and xcodeproj
+        run: |
+          brew install xcodegen
+          gem install --user-install --no-document xcodeproj
+          echo "$(ruby -e 'print Gem.user_dir')/bin" >> "$GITHUB_PATH"
+      - name: Run tests
+        run: tests/run-tests.sh

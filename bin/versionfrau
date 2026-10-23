@@ -1,0 +1,363 @@
+#!/bin/bash
+#
+# VersionFrau for Xcode — automatic version numbers for Xcode projects, kept in a plain
+# version.properties file next to the project (major, minor, patch, build).
+#
+#   Debug configuration   → increments build
+#   Release configuration → increments patch, resets build to 0
+#
+# Usage:
+#   versionfrau increment              scheme Build pre-action: bump once per build ($CONFIGURATION)
+#   versionfrau apply                  Run Script phase: write the version into the built Info.plist
+#   versionfrau run                    increment + apply (single-target projects, no pre-action)
+#   versionfrau bump build|patch|minor|major
+#   versionfrau print [key]            marketingVersion, bundleVersion, versionName, fullVersionName,
+#                                      major, minor, patch, build, buildTime (all keys when omitted)
+#   versionfrau install <App.xcodeproj> [--scheme <name>] [--target <name>]... [--file <path>]
+#
+# Environment:
+#   VERSIONFRAU_FILE                    version file (default: $PROJECT_DIR/version.properties,
+#                                       or ./version.properties outside Xcode)
+#   VERSIONFRAU_RELEASE_CONFIGURATIONS  space-separated release configurations (default: "Release")
+#
+# Copyright (c) Aralel GmbH — MIT License
+
+set -euo pipefail
+
+readonly VERSIONFRAU_VERSION="0.0.1"
+readonly SCRIPT_PATH="$0"
+
+version_file="${VERSIONFRAU_FILE:-${PROJECT_DIR:-$PWD}/version.properties}"
+release_configurations="${VERSIONFRAU_RELEASE_CONFIGURATIONS:-Release}"
+
+major=1
+minor=0
+patch=0
+build=0
+
+log() { echo "VersionFrau: $*"; }
+fail() { echo "error: VersionFrau: $*" >&2; exit 1; }
+
+# --- version file -----------------------------------------------------------------------------
+
+read_property() {
+    local key="$1" default_value="$2" value
+    value=$(sed -n "s/^[[:space:]]*${key}[[:space:]]*[=:][[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p" "$version_file" | tail -n 1)
+    echo "${value:-$default_value}"
+}
+
+read_version() {
+    if [ ! -f "$version_file" ]; then
+        major=1; minor=0; patch=0; build=0
+        write_version
+        return
+    fi
+    major=$(read_property major 1)
+    minor=$(read_property minor 0)
+    patch=$(read_property patch 0)
+    build=$(read_property build 0)
+}
+
+write_version() {
+    local temporary_file="${version_file}.tmp.$$"
+    mkdir -p "$(dirname "$version_file")"
+    {
+        echo "# VersionFrau - auto-managed version file, change it with 'versionfrau bump'"
+        echo "major=$major"
+        echo "minor=$minor"
+        echo "patch=$patch"
+        echo "build=$build"
+    } > "$temporary_file"
+    mv -f "$temporary_file" "$version_file"
+}
+
+# Serializes concurrent read-modify-write cycles (parallel targets, several builds at once).
+with_lock() {
+    local lock_directory="${version_file}.lock" attempts=0
+    while ! mkdir "$lock_directory" 2>/dev/null; do
+        attempts=$((attempts + 1))
+        if [ "$attempts" -ge 100 ]; then
+            # A stale lock left by a killed build — take it over.
+            rm -rf "$lock_directory"
+            continue
+        fi
+        sleep 0.1
+    done
+    trap "rm -rf '$lock_directory'" EXIT
+    "$@"
+    rm -rf "$lock_directory"
+    trap - EXIT
+}
+
+# --- version formats -------------------------------------------------------------------------
+
+is_release_configuration() {
+    local configuration="${1:-${CONFIGURATION:-}}" release_configuration
+    for release_configuration in $release_configurations; do
+        [ "$configuration" = "$release_configuration" ] && return 0
+    done
+    return 1
+}
+
+marketing_version() { echo "$major.$minor.$patch"; }
+full_version_name() { echo "$major.$minor.$patch.$build"; }
+
+version_name() {
+    if is_release_configuration; then marketing_version; else full_version_name; fi
+}
+
+bundle_version() {
+    local release_code=$((major * 1000000000 + minor * 1000000 + patch * 1000))
+    if is_release_configuration; then echo "$release_code"; else echo $((release_code + build)); fi
+}
+
+build_time() { LC_ALL=en_US.UTF-8 date "+%b %d, %Y"; }
+
+# --- commands ---------------------------------------------------------------------------------
+
+# Index and clean builds must not burn version numbers.
+is_background_build() {
+    [ "${ACTION:-}" = "indexbuild" ] || [ "${ACTION:-}" = "clean" ]
+}
+
+increment_locked() {
+    read_version
+    if is_release_configuration; then
+        patch=$((patch + 1))
+        build=0
+    else
+        build=$((build + 1))
+    fi
+    write_version
+}
+
+command_increment() {
+    if is_background_build; then
+        log "skipping increment for $ACTION build"
+        return
+    fi
+    [ -n "${CONFIGURATION:-}" ] || fail "CONFIGURATION is not set — in the scheme pre-action, set 'Provide build settings from' to your app target"
+    with_lock increment_locked
+    log "$(version_name) (${CONFIGURATION}) → $version_file"
+}
+
+set_plist_value() {
+    local plist_file="$1" key="$2" value="$3"
+    /usr/libexec/PlistBuddy -c "Set :$key $value" "$plist_file" 2>/dev/null \
+        || /usr/libexec/PlistBuddy -c "Add :$key string $value" "$plist_file"
+}
+
+command_apply() {
+    [ -n "${TARGET_BUILD_DIR:-}" ] && [ -n "${INFOPLIST_PATH:-}" ] \
+        || fail "'apply' must run in an Xcode Run Script build phase (TARGET_BUILD_DIR / INFOPLIST_PATH missing)"
+    local plist_file="$TARGET_BUILD_DIR/$INFOPLIST_PATH"
+    [ -f "$plist_file" ] || fail "built Info.plist not found at $plist_file — add \$(TARGET_BUILD_DIR)/\$(INFOPLIST_PATH) to the phase's input files"
+
+    read_version
+    # CFBundleShortVersionString must be at most three integers for App Store Connect, so the
+    # four-part debug name goes into VersionFrauVersionName. CFBundleVersion gets a single number
+    # that grows with every build and release, as App Store Connect requires.
+    set_plist_value "$plist_file" CFBundleShortVersionString "$(marketing_version)"
+    set_plist_value "$plist_file" CFBundleVersion "$(bundle_version)"
+    set_plist_value "$plist_file" VersionFrauVersionName "$(version_name)"
+    set_plist_value "$plist_file" VersionFrauFullVersionName "$(full_version_name)"
+    set_plist_value "$plist_file" VersionFrauBuildTime "$(build_time)"
+    log "${TARGET_NAME:-target}: $(version_name) ($(bundle_version))"
+}
+
+command_bump() {
+    local component="${1:-}"
+    case "$component" in
+        build|patch|minor|major) ;;
+        *) fail "usage: versionfrau bump build|patch|minor|major" ;;
+    esac
+    with_lock bump_locked "$component"
+    log "$(full_version_name) → $version_file"
+}
+
+bump_locked() {
+    read_version
+    case "$1" in
+        build) build=$((build + 1)) ;;
+        patch) patch=$((patch + 1)); build=0 ;;
+        minor) minor=$((minor + 1)); patch=0; build=0 ;;
+        major) major=$((major + 1)); minor=0; patch=0; build=0 ;;
+    esac
+    write_version
+}
+
+command_print() {
+    read_version
+    case "${1:-}" in
+        "")
+            echo "major=$major"
+            echo "minor=$minor"
+            echo "patch=$patch"
+            echo "build=$build"
+            echo "marketingVersion=$(marketing_version)"
+            echo "bundleVersion=$(bundle_version)"
+            echo "versionName=$(version_name)"
+            echo "fullVersionName=$(full_version_name)"
+            echo "buildTime=$(build_time)"
+            ;;
+        major) echo "$major" ;;
+        minor) echo "$minor" ;;
+        patch) echo "$patch" ;;
+        build) echo "$build" ;;
+        marketingVersion) marketing_version ;;
+        bundleVersion) bundle_version ;;
+        versionName) version_name ;;
+        fullVersionName) full_version_name ;;
+        buildTime) build_time ;;
+        *) fail "unknown key '$1'" ;;
+    esac
+}
+
+command_install() {
+    command -v ruby >/dev/null || fail "install needs Ruby (preinstalled on macOS)"
+    if ! ruby -e 'require "xcodeproj"' 2>/dev/null; then
+        # A private gem home: no sudo, and nothing is added to the user's Ruby.
+        local gem_home="${VERSIONFRAU_GEM_HOME:-$HOME/.versionfrau/gems}"
+        export GEM_PATH="$gem_home${GEM_PATH:+:$GEM_PATH}"
+        if ! ruby -e 'require "xcodeproj"' 2>/dev/null; then
+            log "installing the xcodeproj gem into $gem_home (one time)"
+            # RubyGems of the same ruby that runs the installer (a `gem` on PATH can belong to another one).
+            ruby -e 'require "rubygems/gem_runner"; Gem::GemRunner.new.run(ARGV)' -- \
+                install --no-document --install-dir "$gem_home" xcodeproj >/dev/null \
+                || fail "could not install the xcodeproj gem — install it with 'gem install xcodeproj' or follow the manual setup in the README"
+        fi
+    fi
+    ruby - "$SCRIPT_PATH" "$@" <<'RUBY'
+require "xcodeproj"
+require "fileutils"
+require "pathname"
+
+script_source = File.expand_path(ARGV.shift)
+project_path = nil
+scheme_name = nil
+target_names = []
+version_file = nil
+until ARGV.empty?
+  argument = ARGV.shift
+  case argument
+  when "--scheme" then scheme_name = ARGV.shift
+  when "--target" then target_names << ARGV.shift
+  when "--file" then version_file = ARGV.shift
+  else project_path = argument
+  end
+end
+abort "usage: versionfrau install <App.xcodeproj> [--scheme <name>] [--target <name>]... [--file <path>]" unless project_path
+project_path = File.expand_path(project_path.chomp("/"))
+abort "error: VersionFrau: #{project_path} is not an .xcodeproj" unless project_path.end_with?(".xcodeproj") && File.directory?(project_path)
+
+project = Xcodeproj::Project.open(project_path)
+project_directory = File.dirname(project_path)
+
+# Copy the script next to the project so the build never depends on a global install.
+installed_script = File.join(project_directory, "versionfrau")
+unless File.expand_path(installed_script) == script_source
+  FileUtils.cp(script_source, installed_script)
+end
+FileUtils.chmod(0o755, installed_script)
+
+environment_prefix = version_file ? %(VERSIONFRAU_FILE="${PROJECT_DIR}/#{version_file}" ) : ""
+
+bundle_types = %i[application app_extension watch2_app watch2_extension messages_extension
+                  application_on_demand_install_capable extensionkit_extension].map do |type|
+  Xcodeproj::Constants::PRODUCT_TYPE_UTI[type]
+end.compact
+all_targets = project.native_targets
+targets =
+  if target_names.empty?
+    all_targets.select { |target| bundle_types.include?(target.product_type) }
+  else
+    target_names.map do |name|
+      all_targets.find { |target| target.name == name } || abort("error: VersionFrau: no target named #{name}")
+    end
+  end
+abort "error: VersionFrau: no app or app extension targets found - pass --target" if targets.empty?
+
+phase_name = "VersionFrau"
+targets.each do |target|
+  phase = target.shell_script_build_phases.find { |existing| existing.name == phase_name } ||
+          target.new_shell_script_build_phase(phase_name)
+  # Last phase: runs after Info.plist processing, before code signing.
+  target.build_phases.delete(phase)
+  target.build_phases << phase
+  phase.shell_path = "/bin/sh"
+  phase.shell_script = %(#{environment_prefix}"${PROJECT_DIR}/versionfrau" apply\n)
+  phase.input_paths = ["$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)"]
+  phase.output_paths = []
+  phase.always_out_of_date = "1"
+  target.build_configurations.each do |configuration|
+    # The phase edits the built Info.plist and reads version.properties outside declared outputs.
+    configuration.build_settings["ENABLE_USER_SCRIPT_SANDBOXING"] = "NO"
+  end
+end
+project.save
+
+# Increment once per build in the scheme's Build pre-action, so the app and all its extensions
+# carry the same version.
+schemes_directory = Xcodeproj::XCScheme.shared_data_dir(project_path).to_s
+scheme_files = Dir[File.join(schemes_directory, "*.xcscheme")]
+application_target = targets.find { |target| target.product_type == Xcodeproj::Constants::PRODUCT_TYPE_UTI[:application] } || targets.first
+if scheme_files.empty?
+  scheme = Xcodeproj::XCScheme.new
+  scheme.configure_with_targets(application_target, nil)
+  scheme.save_as(project_path, scheme_name || application_target.name, true)
+  scheme_files = Dir[File.join(schemes_directory, "*.xcscheme")]
+end
+if scheme_name
+  scheme_files = scheme_files.select { |file| File.basename(file, ".xcscheme") == scheme_name }
+  abort "error: VersionFrau: no shared scheme named #{scheme_name}" if scheme_files.empty?
+end
+
+pre_action_title = "VersionFrau increment"
+scheme_files.each do |scheme_file|
+  scheme = Xcodeproj::XCScheme.new(scheme_file)
+  build_action = scheme.build_action
+  pre_actions_element = build_action.xml_element.elements["PreActions"]
+  if pre_actions_element
+    pre_actions_element.get_elements("ExecutionAction").each do |existing|
+      title = existing.elements["ActionContent"]&.attributes&.[]("title")
+      pre_actions_element.delete_element(existing) if title == pre_action_title
+    end
+  end
+  content = Xcodeproj::XCScheme::ShellScriptActionContent.new
+  content.title = pre_action_title
+  content.shell_to_invoke = "/bin/sh"
+  content.script_text = %(#{environment_prefix}"${PROJECT_DIR}/versionfrau" increment\n)
+  content.buildable_reference = Xcodeproj::XCScheme::BuildableReference.new(application_target)
+  action = Xcodeproj::XCScheme::ExecutionAction.new(nil, :shell_script)
+  action.action_content = content
+  build_action.add_pre_action(action)
+  scheme.save!
+  puts "VersionFrau: pre-action added to scheme #{File.basename(scheme_file, '.xcscheme')}"
+end
+
+targets.each { |target| puts "VersionFrau: apply phase added to target #{target.name}" }
+puts "VersionFrau: script installed at #{Pathname.new(installed_script).relative_path_from(Pathname.pwd)}"
+RUBY
+}
+
+usage() {
+    sed -n '/^# Usage:/,/^# Copyright/p' "$SCRIPT_PATH" | sed -e '$d' -e 's/^# \{0,1\}//'
+}
+
+main() {
+    local command="${1:-}"
+    [ $# -gt 0 ] && shift
+    case "$command" in
+        increment) command_increment ;;
+        apply) command_apply ;;
+        run) command_increment; command_apply ;;
+        bump) command_bump "$@" ;;
+        print) command_print "$@" ;;
+        install) command_install "$@" ;;
+        version|--version) echo "$VERSIONFRAU_VERSION" ;;
+        help|--help|-h|"") usage ;;
+        *) usage >&2; exit 64 ;;
+    esac
+}
+
+main "$@"
