@@ -1,3 +1,6 @@
 .DS_Store
 version.properties
 *.lock/
+.build/
+.swiftpm/
+Package.resolved

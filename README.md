@@ -6,44 +6,68 @@ Automatic version and build numbers for iOS, macOS, watchOS, tvOS and visionOS a
 - **Debug build** (any configuration that isn't a release one) → increments **build**
 - **Release build / Archive** (the `Release` configuration) → increments **patch** (resets build to 0)
 
-It's a single dependency-free shell script that lives in your repo next to the `.xcodeproj`.
+It's a Swift package for Xcode: add it to your project, right-click the project, choose **Install VersionFrau**, and you're done.
 
-## Installation
+## Installation (Swift Package)
+
+1. In Xcode: **File → Add Package Dependencies…** and enter
+
+   ```
+   https://github.com/aralel/versionfrau-ios
+   ```
+
+   Pick **Up to Next Major Version** from `1.0.0`. Add the **VersionFrau** library to your app target if you want to
+   read the version in Swift (optional).
+2. In the Project navigator, **right-click your project → Install VersionFrau**. Allow it to change the project (and,
+   the first time, to download the `xcodeproj` Ruby gem).
+3. Build. `version.properties` appears next to your `.xcodeproj`; commit it, together with the copied `versionfrau` script.
+
+The same context menu has **Bump Minor Version** and **Bump Major Version**. Build and patch are incremented by builds.
+
+Builds don't depend on the package: they run the `versionfrau` script that was copied next to your project. Run
+**Install VersionFrau** again after updating the package to update that copy.
+
+## Installation (command line)
+
+For CI, scripts, or if you'd rather not add a package dependency, the same tool is a single shell script.
 
 **Homebrew**
 
 ```bash
-brew tap aralel/versionfrau-xcode https://github.com/aralel/versionfrau-xcode
+brew tap aralel/versionfrau-ios https://github.com/aralel/versionfrau-ios
 brew install versionfrau-xcode
 ```
 
 **curl**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/aralel/versionfrau-xcode/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/aralel/versionfrau-ios/main/install.sh | bash
 ```
 
 This installs the latest release to `/usr/local/bin`, or to `~/.local/bin` if `/usr/local/bin` isn't writable.
 `VERSIONFRAU_REF=v1.0.0` pins a version, and `VERSIONFRAU_PREFIX=<dir>` picks the folder.
 
-**Without installing anything:** set up one project straight from GitHub.
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/aralel/versionfrau-xcode/main/install.sh | bash -s -- MyApp.xcodeproj
-```
-
-## Setup
+Then set up a project:
 
 ```bash
 cd path/to/your/app
 versionfrau install MyApp.xcodeproj
 ```
 
-The installer needs the [`xcodeproj`](https://github.com/CocoaPods/Xcodeproj) Ruby gem. If your Ruby doesn't have it, the
-installer downloads it once into `~/.versionfrau/gems`. No sudo is needed and your Ruby setup isn't changed.
-Builds themselves only need the copied shell script, not Ruby.
+Or, without installing anything:
 
-The installer:
+```bash
+curl -fsSL https://raw.githubusercontent.com/aralel/versionfrau-ios/main/install.sh | bash -s -- MyApp.xcodeproj
+```
+
+## What Install does
+
+Install (the Xcode plugin or `versionfrau install`) uses the [`xcodeproj`](https://github.com/CocoaPods/Xcodeproj) Ruby
+gem. If your Ruby doesn't have it, it's downloaded once (the command line uses `~/.versionfrau/gems`, the plugin its own
+work folder). No sudo is needed and your Ruby setup isn't changed. Builds themselves only need the copied shell script,
+not Ruby.
+
+Install:
 
 1. Copies `versionfrau` next to `MyApp.xcodeproj`. Commit it, so builds never depend on a global install.
 2. Adds a **Build pre-action** (`VersionFrau increment`) to every shared scheme. It increments the version once per build.
@@ -52,6 +76,8 @@ The installer:
 4. Sets `ENABLE_USER_SCRIPT_SANDBOXING = NO` on those targets. The phase edits the built `Info.plist` and reads `version.properties`.
 
 You can run it again at any time. It replaces its own phase and pre-action instead of adding duplicates.
+
+Command-line options:
 
 | Option | Description |
 |---|---|
@@ -112,15 +138,14 @@ built product, so you can leave them as they are. Your source `Info.plist` is ne
 
 ### Reading the values in Swift
 
+Add the **VersionFrau** library to your target:
+
 ```swift
-enum BuildConfig {
-    private static func value(_ key: String) -> String {
-        Bundle.main.object(forInfoDictionaryKey: key) as? String ?? ""
-    }
-    static let versionName = value("VersionFrauVersionName")
-    static let fullVersionName = value("VersionFrauFullVersionName")
-    static let buildTime = value("VersionFrauBuildTime")
-}
+import VersionFrau
+
+Text("Version \(VersionFrau.versionName), built \(VersionFrau.buildTime)")
+// also: VersionFrau.marketingVersion, .bundleVersion, .fullVersionName
+// another bundle (e.g. from an extension): VersionFrau.Info(bundle: Bundle(for: SomeClass.self))
 ```
 
 ### Configurations
@@ -144,7 +169,8 @@ VERSIONFRAU_RELEASE_CONFIGURATIONS="Release AppStore" "${PROJECT_DIR}/versionfra
 
 ## Several projects, one version
 
-Point each project at the same file. Concurrent writes are locked, so parallel builds don't lose increments:
+Point each project at the same file with the command-line installer (the Xcode plugin always uses
+`version.properties` next to the project). Concurrent writes are locked, so parallel builds don't lose increments:
 
 ```bash
 versionfrau install App/App.xcodeproj --file ../version.properties
@@ -153,13 +179,14 @@ versionfrau install MacApp/MacApp.xcodeproj --file ../version.properties
 
 ## Updating
 
-`brew upgrade versionfrau-xcode`, or run the curl installer again. Then run `versionfrau install MyApp.xcodeproj`
-again to update the copy of the script in your project.
+Swift package: **File → Packages → Update to Latest Package Versions**, then right-click the project →
+**Install VersionFrau** again to update the copied script. Command line: `brew upgrade versionfrau-xcode` or the curl
+installer, then `versionfrau install MyApp.xcodeproj` again.
 
 ## Tests
 
 ```bash
-tests/run-tests.sh          # unit tests + builds a generated iOS app with a widget extension
+tests/run-tests.sh          # unit tests, swift test, plugins, and builds a generated iOS app with a widget extension
 tests/run-tests.sh --unit   # unit tests only
 ```
 
@@ -170,13 +197,14 @@ Actions (`.github/workflows/tests.yml`).
 
 ```bash
 scripts/release.sh 1.1.0             # sets the version in bin/versionfrau, adds the CHANGELOG heading, runs unit tests
-git commit -am "Release v1.1.0" && git tag v1.1.0 && git push && git push --tags
+git commit -am "Release v1.1.0" && git tag v1.1.0 && git push && git push --tags   # the tag is the Swift package version
 # create the GitHub release for v1.1.0 (the curl installer installs the latest release)
 scripts/release.sh --formula 1.1.0   # writes the tarball url + sha256 into Formula/versionfrau-xcode.rb
 git commit -am "Formula v1.1.0" && git push
 ```
 
-Until the first release, the formula has no stable version: install it with `brew install --HEAD versionfrau-xcode`.
+Xcode's "Up to Next Major Version" only finds tagged versions. Until `v1.0.0` is tagged, add the package with
+**Dependency Rule: Branch → main**, and install the formula with `brew install --HEAD versionfrau-xcode`.
 
 ## License
 

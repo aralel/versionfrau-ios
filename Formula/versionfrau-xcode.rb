@@ -1,9 +1,9 @@
 class VersionfrauXcode < Formula
   desc "Automatic version and build numbers for Xcode projects"
-  homepage "https://github.com/aralel/versionfrau-xcode"
+  homepage "https://github.com/aralel/versionfrau-ios"
   # `url` and `sha256` of the latest release are written by scripts/release.sh --formula <version>.
   license "MIT"
-  head "https://github.com/aralel/versionfrau-xcode.git", branch: "main"
+  head "https://github.com/aralel/versionfrau-ios.git", branch: "main"
 
   depends_on :macos
 

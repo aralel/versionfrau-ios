@@ -2,10 +2,10 @@
 #
 # Installs VersionFrau for Xcode from GitHub.
 #
-#   curl -fsSL https://raw.githubusercontent.com/aralel/versionfrau-xcode/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/aralel/versionfrau-ios/main/install.sh | bash
 #       installs the `versionfrau` command (/usr/local/bin if writable, else ~/.local/bin)
 #
-#   curl -fsSL https://raw.githubusercontent.com/aralel/versionfrau-xcode/main/install.sh | bash -s -- MyApp.xcodeproj
+#   curl -fsSL https://raw.githubusercontent.com/aralel/versionfrau-ios/main/install.sh | bash -s -- MyApp.xcodeproj
 #       sets up one project without installing the command (arguments are passed to `versionfrau install`)
 #
 # Environment:
@@ -17,7 +17,7 @@
 
 set -euo pipefail
 
-readonly repository="aralel/versionfrau-xcode"
+readonly repository="aralel/versionfrau-ios"
 
 fail() { echo "error: $*" >&2; exit 1; }
 

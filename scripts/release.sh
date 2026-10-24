@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-readonly repository="aralel/versionfrau-xcode"
+readonly repository="aralel/versionfrau-ios"
 readonly project_directory="$(cd "$(dirname "$0")/.." && pwd)"
 readonly formula_file="$project_directory/Formula/versionfrau-xcode.rb"
 

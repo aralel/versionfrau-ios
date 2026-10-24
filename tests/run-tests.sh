@@ -2,15 +2,17 @@
 #
 # Tests for the VersionFrau Xcode script.
 #
-#   xcode/tests/run-tests.sh            unit + Xcode integration tests
-#   xcode/tests/run-tests.sh --unit     unit tests only (no Xcode needed)
+#   tests/run-tests.sh            unit + Swift package + Xcode integration tests
+#   tests/run-tests.sh --unit     unit tests only (no Xcode needed)
 #
-# The integration tests generate an iOS app with an embedded widget extension (xcodegen), install
-# VersionFrau with `versionfrau install` (xcodeproj gem) and build it with xcodebuild.
+# The integration tests generate an iOS app with an embedded widget extension (xcodegen) that uses
+# the VersionFrau Swift package, install VersionFrau with `versionfrau install` (xcodeproj gem) and
+# build it with xcodebuild.
 
 set -uo pipefail
 
-readonly versionfrau_script="$(cd "$(dirname "$0")/.." && pwd)/bin/versionfrau"
+readonly package_directory="$(cd "$(dirname "$0")/.." && pwd)"
+readonly versionfrau_script="$package_directory/bin/versionfrau"
 work_directory="$(mktemp -d "${TMPDIR:-/tmp}/versionfrau-tests.XXXXXX")"
 [ -n "${VERSIONFRAU_KEEP_TEST_DIR:-}" ] && echo "Test directory: $work_directory" || trap 'rm -rf "$work_directory"' EXIT
 
@@ -87,6 +89,39 @@ run_unit_tests() {
     fi
 }
 
+# --- Swift package tests ----------------------------------------------------------------------
+
+run_package_tests() {
+    echo "Swift package tests"
+    if ! command -v swift >/dev/null; then
+        echo "  skipped — needs swift"
+        return
+    fi
+    (cd "$package_directory" && swift test) > "$work_directory/swift-test.log" 2>&1
+    assert_equals "swift test passes (VersionFrau library)" "0" "$?"
+
+    # A package that depends on VersionFrau, like an app does, and runs its command plugins.
+    local consumer_directory="$work_directory/Consumer"
+    mkdir -p "$consumer_directory/Sources/Consumer"
+    cat > "$consumer_directory/Package.swift" <<SWIFT
+// swift-tools-version: 6.0
+import PackageDescription
+let package = Package(
+    name: "Consumer",
+    dependencies: [.package(path: "$package_directory")],
+    targets: [.target(name: "Consumer", dependencies: [.product(name: "VersionFrau", package: "$(basename "$package_directory")")])]
+)
+SWIFT
+    echo 'import VersionFrau
+public let shownVersion = VersionFrau.versionName' > "$consumer_directory/Sources/Consumer/Consumer.swift"
+    (cd "$consumer_directory" && swift build) > "$work_directory/consumer-build.log" 2>&1
+    assert_equals "a dependent package builds with the library" "0" "$?"
+    (cd "$consumer_directory" && swift package --allow-writing-to-package-directory versionfrau-bump-minor) >/dev/null 2>&1
+    assert_equals "Bump Minor Version plugin" "1.1.0.0" "$(cd "$consumer_directory" && "$versionfrau_script" print fullVersionName)"
+    (cd "$consumer_directory" && swift package --allow-writing-to-package-directory versionfrau-bump-major) >/dev/null 2>&1
+    assert_equals "Bump Major Version plugin" "2.0.0.0" "$(cd "$consumer_directory" && "$versionfrau_script" print fullVersionName)"
+}
+
 # --- Xcode integration tests ------------------------------------------------------------------
 
 xcode_build() {
@@ -108,12 +143,13 @@ run_integration_tests() {
     mkdir -p "$project_directory/App" "$project_directory/Widget"
     cat > "$project_directory/App/App.swift" <<'SWIFT'
 import SwiftUI
+import VersionFrau
 
 @main
 struct SampleApp: App {
     var body: some Scene {
         WindowGroup {
-            Text(Bundle.main.object(forInfoDictionaryKey: "VersionFrauBuildTime") as? String ?? "")
+            Text("\(VersionFrau.versionName) — \(VersionFrau.buildTime)")
         }
     }
 }
@@ -139,8 +175,11 @@ struct SampleWidget: Widget {
     }
 }
 SWIFT
-    cat > "$project_directory/project.yml" <<'YAML'
+    cat > "$project_directory/project.yml" <<YAML
 name: Sample
+packages:
+  VersionFrau:
+    path: $package_directory
 options:
   bundleIdPrefix: com.example
   deploymentTarget:
@@ -158,11 +197,12 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        CFBundleShortVersionString: $(MARKETING_VERSION)
-        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: \$(MARKETING_VERSION)
+        CFBundleVersion: \$(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
     dependencies:
       - target: SampleWidget
+      - package: VersionFrau
   SampleWidget:
     type: app-extension
     platform: iOS
@@ -170,8 +210,8 @@ targets:
     info:
       path: Widget/Info.plist
       properties:
-        CFBundleShortVersionString: $(MARKETING_VERSION)
-        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: \$(MARKETING_VERSION)
+        CFBundleVersion: \$(CURRENT_PROJECT_VERSION)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
 schemes:
@@ -218,7 +258,7 @@ YAML
 }
 
 if [ "${1:-}" != "--integration" ]; then run_unit_tests; fi
-if [ "${1:-}" != "--unit" ]; then run_integration_tests; fi
+if [ "${1:-}" != "--unit" ]; then run_package_tests; run_integration_tests; fi
 
 echo
 echo "$passed_count passed, $failed_count failed"
