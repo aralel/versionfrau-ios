@@ -32,6 +32,13 @@ assert_equals() {
 
 plist_value() { /usr/libexec/PlistBuddy -c "Print :$2" "$1" 2>/dev/null; }
 
+# A build setting as Xcode resolves it (what the target's General tab shows).
+build_setting() {
+    local configuration="$1" setting="$2"
+    xcodebuild -project "$project_directory/Sample.xcodeproj" -target Sample -configuration "$configuration" \
+        -showBuildSettings 2>/dev/null | sed -n "s/^ *$setting = //p"
+}
+
 # --- unit tests -------------------------------------------------------------------------------
 
 run_unit_tests() {
@@ -72,6 +79,14 @@ run_unit_tests() {
     CONFIGURATION=Debug "$versionfrau_script" increment >/dev/null
     assert_equals "reads hand-edited version.properties" "1.0.3.42" "$("$versionfrau_script" print fullVersionName)"
 
+    CONFIGURATION=Debug "$versionfrau_script" increment >/dev/null
+    assert_equals "xcconfig MARKETING_VERSION" "1.0.3" "$(sed -n 's/^MARKETING_VERSION = //p' VersionFrau.xcconfig)"
+    assert_equals "xcconfig CURRENT_PROJECT_VERSION (debug)" "1000003043" "$(sed -n 's/^CURRENT_PROJECT_VERSION = //p' VersionFrau.xcconfig)"
+    assert_equals "xcconfig CURRENT_PROJECT_VERSION (release)" "1000003000" "$(sed -n 's/^CURRENT_PROJECT_VERSION\[config=Release\] = //p' VersionFrau.xcconfig)"
+    rm VersionFrau.xcconfig
+    "$versionfrau_script" print >/dev/null
+    assert_equals "missing xcconfig is recreated" "yes" "$([ -f VersionFrau.xcconfig ] && echo yes || echo no)"
+
     VERSIONFRAU_FILE="$unit_directory/config/version.properties" "$versionfrau_script" print >/dev/null
     assert_equals "VERSIONFRAU_FILE sets a custom location" "yes" "$([ -f config/version.properties ] && echo yes || echo no)"
 
@@ -80,7 +95,7 @@ run_unit_tests() {
         CONFIGURATION=Debug "$versionfrau_script" increment >/dev/null &
     done
     wait
-    assert_equals "parallel increments are not lost" "50" "$("$versionfrau_script" print build)"
+    assert_equals "parallel increments are not lost" "51" "$("$versionfrau_script" print build)"
 
     if ( unset TARGET_BUILD_DIR INFOPLIST_PATH; "$versionfrau_script" apply ) >/dev/null 2>&1; then
         assert_equals "apply outside Xcode fails" "failure" "success"
@@ -230,6 +245,12 @@ YAML
         "$(grep -c 'name = VersionFrau;' "$project_directory/Sample.xcodeproj/project.pbxproj")"
     assert_equals "install is idempotent (one pre-action)" "1" \
         "$(grep -c 'title = "VersionFrau increment"' "$project_directory/Sample.xcodeproj/xcshareddata/xcschemes/Sample.xcscheme")"
+    assert_equals "install is idempotent (one xcconfig reference)" "1" \
+        "$(grep -c 'path = VersionFrau.xcconfig;' "$project_directory/Sample.xcodeproj/project.pbxproj")"
+    assert_equals "install removes hard-coded MARKETING_VERSION" "0" \
+        "$(grep -c 'MARKETING_VERSION' "$project_directory/Sample.xcodeproj/project.pbxproj")"
+    assert_equals "Xcode Version comes from VersionFrau" "1.0.0" "$(build_setting Debug MARKETING_VERSION)"
+    assert_equals "Xcode Build comes from VersionFrau" "1000000000" "$(build_setting Debug CURRENT_PROJECT_VERSION)"
 
     local app_plist="$project_directory/DerivedData/Build/Products/Debug-iphonesimulator/Sample.app/Info.plist"
     local widget_plist="$project_directory/DerivedData/Build/Products/Debug-iphonesimulator/Sample.app/PlugIns/SampleWidget.appex/Info.plist"
@@ -246,6 +267,7 @@ YAML
     xcode_build Debug || { failed_count=$((failed_count + 1)); return; }
     assert_equals "incremental debug build increments again" "1000000002" "$(plist_value "$app_plist" CFBundleVersion)"
     assert_equals "incremental build updates the extension too" "1000000002" "$(plist_value "$widget_plist" CFBundleVersion)"
+    assert_equals "Xcode Build follows debug builds" "1000000002" "$(build_setting Debug CURRENT_PROJECT_VERSION)"
 
     local release_app_plist="$project_directory/DerivedData/Build/Products/Release-iphonesimulator/Sample.app/Info.plist"
     local release_widget_plist="$project_directory/DerivedData/Build/Products/Release-iphonesimulator/Sample.app/PlugIns/SampleWidget.appex/Info.plist"
@@ -255,6 +277,8 @@ YAML
     assert_equals "release CFBundleVersion is the release bundle version" "1000001000" "$(plist_value "$release_app_plist" CFBundleVersion)"
     assert_equals "release VersionFrauVersionName is three-part" "1.0.1" "$(plist_value "$release_app_plist" VersionFrauVersionName)"
     assert_equals "release extension matches the app" "1000001000" "$(plist_value "$release_widget_plist" CFBundleVersion)"
+    assert_equals "Xcode Version follows release builds" "1.0.1" "$(build_setting Release MARKETING_VERSION)"
+    assert_equals "Xcode Build for Release" "1000001000" "$(build_setting Release CURRENT_PROJECT_VERSION)"
 }
 
 if [ "${1:-}" != "--integration" ]; then run_unit_tests; fi

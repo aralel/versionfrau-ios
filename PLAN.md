@@ -1,5 +1,29 @@
 # Plan
 
+## Current prompt (2026-10-24, version)
+
+> we are on version 0.0.19
+
+### Status: done (no commits, no tags)
+
+- v0.0.18 is tagged on origin (the Swift package commit). The uncommitted Xcode Version/Build work is 0.0.19.
+- `VERSIONFRAU_VERSION` = 0.0.19; CHANGELOG split into [0.0.19] and [0.0.18]; README/release.sh examples use 0.0.19/0.0.20.
+- Xcode: "Up to Next Major Version" from 0.0.19 (resolves 0.0.19..<1.0.0). The earlier 1.0.0 requirement can't match 0.0.x tags.
+
+## Current prompt (2026-10-24, Xcode Version/Build)
+
+> ios version and build should come from versionfrau
+
+### Status: done (no commits)
+
+- `bin/versionfrau` writes `VersionFrau.xcconfig` (MARKETING_VERSION, CURRENT_PROJECT_VERSION, per-release-config
+  override) whenever it writes version.properties; `install` sets it as the project-level base configuration and deletes
+  hard-coded MARKETING_VERSION / CURRENT_PROJECT_VERSION.
+- Project-level (not target-level) so CocoaPods' target xcconfigs keep working; existing project-level xcconfig → warning
+  with the `#include?` line.
+- The `apply` Info.plist patch stays: it adds the VersionFrau* keys and covers source Info.plists with hard-coded versions.
+- Verified: 48 tests passing; Xcode reads the xcconfig after the pre-action (same-build value).
+
 ## Current prompt (2026-10-24, Swift package)
 
 > Xcode failed adding https://github.com/aralel/versionfrau-ios: "no versions of 'versionfrau-ios' match the requirement 1.0.0..<2.0.0"

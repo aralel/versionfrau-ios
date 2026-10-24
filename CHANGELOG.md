@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.0.19] - 2026-10-24
+
+### Xcode Version and Build from VersionFrau
+- Every write of `version.properties` also writes `VersionFrau.xcconfig` next to it (`MARKETING_VERSION`, `CURRENT_PROJECT_VERSION`, and `CURRENT_PROJECT_VERSION[config=Release]` without the build). It's only rewritten when the values change, and recreated if missing
+- `install` (and the Install VersionFrau plugin) adds the xcconfig to the project as the project-level base configuration and removes hard-coded `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` from the project and the app/extension targets, so the target's General → Version / Build fields show the VersionFrau version. If a project-level xcconfig already exists, it prints the `#include?` line to add instead of replacing it
+- Verified that Xcode resolves build settings after the scheme pre-action: with the Info.plist patch disabled, the build still got the just-incremented `CFBundleVersion`
+- 11 new tests (xcconfig contents and recreation, idempotent reference, `xcodebuild -showBuildSettings` for Debug and Release before and after builds). 48 tests passing
+
+- `versionfrau --version` reports `0.0.19` (it still said `0.0.1` in v0.0.18)
+- README: Xcode setup uses "Up to Next Major Version" from `0.0.19`. A `1.0.0` requirement never matches 0.0.x tags
+
+## [0.0.18] - 2026-10-24
+
 ### Swift Package
 - The repository is now a Swift package (`Package.swift`, tools 6.0) that Xcode can add with **File → Add Package Dependencies…** from `https://github.com/aralel/versionfrau-ios`
 - `VersionFrau` library: `VersionFrau.marketingVersion`, `.bundleVersion`, `.versionName`, `.fullVersionName`, `.buildTime`, and `VersionFrau.Info(bundle:)` for other bundles. iOS 12, macOS 10.13, tvOS 12, watchOS 9, visionOS 1

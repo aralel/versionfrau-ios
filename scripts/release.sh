@@ -2,9 +2,9 @@
 #
 # Release helper (maintainers).
 #
-#   scripts/release.sh 1.1.0            sets the version in bin/versionfrau and adds a CHANGELOG heading
-#   (commit, then: git tag v1.1.0 && git push && git push --tags, and create the GitHub release)
-#   scripts/release.sh --formula 1.1.0  writes url + sha256 of the pushed v1.1.0 tarball into the Homebrew formula
+#   scripts/release.sh 0.0.20           sets the version in bin/versionfrau and adds a CHANGELOG heading
+#   (commit, then: git tag v0.0.20 && git push && git push --tags, and create the GitHub release)
+#   scripts/release.sh --formula 0.0.20 writes url + sha256 of the pushed v0.0.20 tarball into the Homebrew formula
 #
 # Copyright (c) Aralel GmbH — MIT License
 

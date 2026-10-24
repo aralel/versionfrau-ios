@@ -16,11 +16,12 @@ It's a Swift package for Xcode: add it to your project, right-click the project,
    https://github.com/aralel/versionfrau-ios
    ```
 
-   Pick **Up to Next Major Version** from `1.0.0`. Add the **VersionFrau** library to your app target if you want to
+   Pick **Up to Next Major Version** from `0.0.19`. Add the **VersionFrau** library to your app target if you want to
    read the version in Swift (optional).
 2. In the Project navigator, **right-click your project → Install VersionFrau**. Allow it to change the project (and,
    the first time, to download the `xcodeproj` Ruby gem).
-3. Build. `version.properties` appears next to your `.xcodeproj`; commit it, together with the copied `versionfrau` script.
+3. Build. The target's **General → Version / Build** fields now show the VersionFrau version. Commit
+   `version.properties`, `VersionFrau.xcconfig` and the copied `versionfrau` script, which sit next to your `.xcodeproj`.
 
 The same context menu has **Bump Minor Version** and **Bump Major Version**. Build and patch are incremented by builds.
 
@@ -45,7 +46,7 @@ curl -fsSL https://raw.githubusercontent.com/aralel/versionfrau-ios/main/install
 ```
 
 This installs the latest release to `/usr/local/bin`, or to `~/.local/bin` if `/usr/local/bin` isn't writable.
-`VERSIONFRAU_REF=v1.0.0` pins a version, and `VERSIONFRAU_PREFIX=<dir>` picks the folder.
+`VERSIONFRAU_REF=v0.0.19` pins a version, and `VERSIONFRAU_PREFIX=<dir>` picks the folder.
 
 Then set up a project:
 
@@ -74,6 +75,9 @@ Install:
 3. Adds a **Run Script phase** (`VersionFrau`, last phase) to every app and app-extension target. It writes the version into
    that target's built `Info.plist`, so the app and all its extensions always carry the same version.
 4. Sets `ENABLE_USER_SCRIPT_SANDBOXING = NO` on those targets. The phase edits the built `Info.plist` and reads `version.properties`.
+5. Makes `VersionFrau.xcconfig` the project's base configuration and removes hard-coded `MARKETING_VERSION` /
+   `CURRENT_PROJECT_VERSION` values, so Xcode's **Version** and **Build** fields show the VersionFrau version. If the project
+   already has a project-level xcconfig, Install leaves it alone and prints the `#include?` line to add to it.
 
 You can run it again at any time. It replaces its own phase and pre-action instead of adding duplicates.
 
@@ -98,6 +102,9 @@ If you don't want the gem, set it up by hand:
    - Input Files: `$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)`
    - Uncheck *Based on dependency analysis*
 4. Build Settings → **User Script Sandboxing** → `No` for those targets.
+5. Run `./versionfrau print` once to create `VersionFrau.xcconfig`, add it to the project, and select it in
+   **Project → Info → Configurations** for every configuration. Delete the Version and Build values from your targets
+   (select them in Build Settings and press Delete) so the xcconfig values show through.
 
 **Single-target apps** can skip the pre-action. Use one Run Script phase with
 `"${PROJECT_DIR}/versionfrau" run`, which increments and applies in one step. Don't use `run` when
@@ -133,8 +140,18 @@ Keys written into every target's built `Info.plist`:
 The bundle version is `major * 1_000_000_000 + minor * 1_000_000 + patch * 1_000 (+ build on debug)`.
 It grows with every build and release, as App Store Connect requires.
 
-`MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` in your build settings are overridden in the
-built product, so you can leave them as they are. Your source `Info.plist` is never modified.
+Every change to `version.properties` also rewrites `VersionFrau.xcconfig`:
+
+```
+MARKETING_VERSION = 1.0.3
+CURRENT_PROJECT_VERSION = 1000003042
+CURRENT_PROJECT_VERSION[config=Release] = 1000003000
+```
+
+That makes Xcode's **Version** and **Build** fields, and `$(MARKETING_VERSION)` / `$(CURRENT_PROJECT_VERSION)` everywhere, the
+VersionFrau version. Xcode reads it after the pre-action, so a build already uses the number it just incremented. Change the
+version with `versionfrau bump` or the Bump plugins, not in the General tab: the xcconfig is regenerated. Your source
+`Info.plist` is never modified.
 
 ### Reading the values in Swift
 
@@ -196,15 +213,15 @@ Actions (`.github/workflows/tests.yml`).
 ## Releasing (maintainers)
 
 ```bash
-scripts/release.sh 1.1.0             # sets the version in bin/versionfrau, adds the CHANGELOG heading, runs unit tests
-git commit -am "Release v1.1.0" && git tag v1.1.0 && git push && git push --tags   # the tag is the Swift package version
-# create the GitHub release for v1.1.0 (the curl installer installs the latest release)
-scripts/release.sh --formula 1.1.0   # writes the tarball url + sha256 into Formula/versionfrau-xcode.rb
-git commit -am "Formula v1.1.0" && git push
+scripts/release.sh 0.0.20            # sets the version in bin/versionfrau, adds the CHANGELOG heading, runs unit tests
+git commit -am "Release v0.0.20" && git tag v0.0.20 && git push && git push --tags   # the tag is the Swift package version
+# create the GitHub release for v0.0.20 (the curl installer installs the latest release)
+scripts/release.sh --formula 0.0.20  # writes the tarball url + sha256 into Formula/versionfrau-xcode.rb
+git commit -am "Formula v0.0.20" && git push
 ```
 
-Xcode's "Up to Next Major Version" only finds tagged versions. Until `v1.0.0` is tagged, add the package with
-**Dependency Rule: Branch → main**, and install the formula with `brew install --HEAD versionfrau-xcode`.
+Xcode resolves the package from these tags (`v0.0.19` → version `0.0.19`). The formula has no stable version until
+`scripts/release.sh --formula` has been run for a release; until then install it with `brew install --HEAD versionfrau-xcode`.
 
 ## License
 
